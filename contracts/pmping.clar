@@ -195,5 +195,94 @@
    last-reward-block: uint
  }
 )
+ ;; Circuit breaker for emergency situations
+(define-map circuit-breakers
+ { asset: (string-ascii 10) }
+ {
+   is-triggered: bool,
+   trigger-price: uint,
+   trigger-block: uint,
+   trigger-reason: (string-ascii 50),
+   cooldown-period: uint,
+   reset-block: uint
+ }
+)
+
+
+;; Cross-chain price data (for future expansion)
+(define-map cross-chain-prices
+ { asset: (string-ascii 10), chain: (string-ascii 20) }
+ {
+   price: uint,
+   bridge-fee: uint,
+   last-sync-block: uint,
+   is-synced: bool,
+   price-deviation-percentage: int
+ }
+)
+
+
+;; private functions
+;; Helper function to check if user is contract owner
+(define-private (is-contract-owner (user principal))
+ (is-eq user CONTRACT-OWNER)
+)
+
+
+;; Helper function to check if contract is active
+(define-private (is-contract-active)
+ (is-eq (var-get contract-status) STATUS-ACTIVE)
+)
+
+
+;; Helper function to validate price within acceptable range
+(define-private (is-price-valid (price uint))
+ (and
+   (>= price MIN-PRICE-THRESHOLD)
+   (<= price MAX-PRICE-THRESHOLD)
+   (> price u0)
+ )
+)
+
+
+;; Helper function to check if price data is still fresh
+(define-private (is-price-fresh (timestamp uint))
+ (let ((current-block block-height))
+   (<= (- current-block timestamp) PRICE-VALIDITY-PERIOD)
+ )
+)
+
+
+;; Calculate percentage change between two prices (returns int, can be negative)
+(define-private (calculate-percentage-change (old-price uint) (new-price uint))
+ (if (is-eq old-price u0)
+   0 ;; Return 0 if old price is zero to avoid division by zero
+   (let (
+     (price-diff (if (>= new-price old-price)
+                    (- new-price old-price)
+                    (- old-price new-price)))
+     (percentage (* (/ (* price-diff BASIS-POINTS-MULTIPLIER) old-price) u1))
+     (is-positive (>= new-price old-price))
+   )
+     (if is-positive
+       (to-int percentage)
+       (- (to-int percentage))
+     )
+   )
+ )
+)
+
+
+;; Check if price change exceeds threshold
+(define-private (exceeds-threshold (old-price uint) (new-price uint) (threshold uint))
+ (let ((change-percentage (calculate-percentage-change old-price new-price)))
+   (>= (if (>= change-percentage 0)
+         (to-uint change-percentage)
+         (to-uint (- change-percentage)))
+       threshold)
+ )
+)
+
+
 
 
