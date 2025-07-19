@@ -677,3 +677,85 @@
      }
    )
   
+  ;; Initialize stake if provided
+   (if (> initial-stake u0)
+     (map-set source-stakes
+       { source: source }
+       {
+         staked-amount: initial-stake,
+         lock-period: BLOCKS-PER-DAY,
+         unlock-block: (+ block-height BLOCKS-PER-DAY),
+         earned-rewards: u0,
+         penalty-count: u0,
+         last-reward-block: u0
+       }
+     )
+     true
+   )
+  
+   (ok true)
+ )
+)
+
+
+;; Pause/unpause contract (admin only)
+(define-public (set-contract-status (new-status uint))
+ (let ((caller tx-sender))
+   ;; Check admin permissions
+   (asserts! (or (is-contract-owner caller) (has-admin-permission caller u4)) ERR-UNAUTHORIZED)
+   ;; Validate status
+   (asserts! (and (>= new-status u1) (<= new-status u3)) ERR-INVALID-PERCENTAGE)
+  
+   ;; Update contract status
+   (var-set contract-status new-status)
+  
+   ;; Record emergency block if setting to emergency status
+   (if (is-eq new-status STATUS-EMERGENCY)
+     (var-set last-emergency-block block-height)
+     true
+   )
+  
+   (ok true)
+ )
+)
+
+
+;; Get price data for an asset from a specific source
+(define-read-only (get-price-data (asset (string-ascii 10)) (source principal))
+ (map-get? price-data { asset: asset, source: source })
+)
+
+
+;; Get latest price history for an asset
+(define-read-only (get-price-history (asset (string-ascii 10)) (block-height-lookup uint))
+ (map-get? price-history { asset: asset, block-height: block-height-lookup })
+)
+
+
+;; Get asset monitoring configuration
+(define-read-only (get-asset-monitor (asset (string-ascii 10)))
+ (map-get? asset-monitors { asset: asset })
+)
+
+
+;; Get user subscription details
+(define-read-only (get-user-subscription (user principal) (asset (string-ascii 10)))
+ (map-get? user-subscriptions { user: user, asset: asset })
+)
+
+
+;; Get price source information
+(define-read-only (get-price-source (source principal))
+ (map-get? price-sources { source: source })
+)
+
+
+;; Get contract status
+(define-read-only (get-contract-status)
+ {
+   status: (var-get contract-status),
+   total-pings: (var-get total-pings),
+   last-emergency-block: (var-get last-emergency-block),
+   monitoring-enabled: (var-get monitoring-enabled)
+ }
+)
