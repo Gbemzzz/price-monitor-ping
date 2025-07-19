@@ -545,7 +545,7 @@
    (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
    ;; Validate subscription parameters
    (asserts! (is-subscription-valid threshold-up threshold-down notification-type) ERR-INVALID-PRICE)
-   
+
  ;; Validate asset exists
    (asserts! (is-some (map-get? asset-metadata { asset: asset })) ERR-NOT-FOUND)
   
@@ -568,4 +568,112 @@
    (ok true)
  )
 )
+;; Trigger price alert/ping when thresholds are met
+(define-public (trigger-price-ping (asset (string-ascii 10)) (old-price uint) (new-price uint) (trigger-type uint))
+ (let (
+   (caller tx-sender)
+   (ping-id (generate-ping-id))
+ )
+   ;; Validate contract is active
+   (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
+   ;; Validate caller is authorized source
+   (asserts! (is-source-reliable caller u50) ERR-UNAUTHORIZED)
+   ;; Validate prices
+   (asserts! (is-price-valid old-price) ERR-INVALID-PRICE)
+   (asserts! (is-price-valid new-price) ERR-INVALID-PRICE)
+   ;; Validate trigger type (1=threshold, 2=percentage, 3=emergency)
+   (asserts! (and (>= trigger-type u1) (<= trigger-type u3)) ERR-INVALID-PERCENTAGE)
+  
+   ;; Check if asset monitor exists and is active
+   (match (map-get? asset-monitors { asset: asset })
+     monitor-data
+     (begin
+       (asserts! (get is-active monitor-data) ERR-NOT-FOUND)
+       ;; Check if enough time has passed since last alert
+       (asserts! (can-ping-now (get last-alert-block monitor-data)) ERR-THRESHOLD-NOT-MET)
+      
+       ;; Determine severity based on price change
+       (let (
+         (change-percentage (calculate-percentage-change old-price new-price))
+         (severity (if (>= (if (>= change-percentage 0)
+                             (to-uint change-percentage)
+                             (to-uint (- change-percentage))) u1000) ;; 10%
+                      u4 ;; Critical
+                      (if (>= (if (>= change-percentage 0)
+                                (to-uint change-percentage)
+                                (to-uint (- change-percentage))) u500) ;; 5%
+                         u3 ;; High
 
+  
+                         (if (>= (if (>= change-percentage 0)
+                                   (to-uint change-percentage)
+                                   (to-uint (- change-percentage))) u200) ;; 2%
+                            u2 ;; Medium
+                            u1)))) ;; Low
+       )
+         ;; Record ping in history
+         (map-set ping-history
+           { ping-id: ping-id }
+           {
+             asset: asset,
+             trigger-type: trigger-type,
+             old-price: old-price,
+             new-price: new-price,
+             block-height: block-height,
+             affected-users: u1, ;; TODO: Count actual affected users
+             severity: severity
+           }
+         )
+        
+         ;; Update monitor with new alert
+         (map-set asset-monitors
+           { asset: asset }
+           (merge monitor-data {
+             alert-count: (+ (get alert-count monitor-data) u1),
+             last-alert-block: block-height
+           })
+         )
+        
+         ;; Store price history
+         (map-set price-history
+           { asset: asset, block-height: block-height }
+           {
+             price: new-price,
+             change-percentage: change-percentage,
+             volume: u0, ;; TODO: Get actual volume
+             volatility-score: u0 ;; TODO: Calculate from recent history
+           }
+         )
+        
+          (ok ping-id)
+       )
+     )
+     ERR-NOT-FOUND
+   )
+ )
+)
+
+
+;; Add authorized price source (admin only)
+(define-public (add-price-source (source principal) (initial-stake uint))
+ (let ((caller tx-sender))
+   ;; Check admin permissions
+   (asserts! (or (is-contract-owner caller) (has-admin-permission caller u3)) ERR-UNAUTHORIZED)
+   ;; Validate contract is active
+   (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
+   ;; Check if source already exists
+   (asserts! (is-none (map-get? price-sources { source: source })) ERR-ALREADY-EXISTS)
+  
+   ;; Add price source
+   (map-set price-sources
+     { source: source }
+     {
+       is-authorized: true,
+       reliability-score: u50, ;; Default starting score
+       total-submissions: u0,
+       successful-submissions: u0,
+       last-submission-block: u0,
+       stake-amount: initial-stake
+     }
+   )
+  
