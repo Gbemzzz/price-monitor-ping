@@ -426,5 +426,124 @@
    false
  )
 )
+;; public functions
+;; Submit new price data from authorized sources
+(define-public (submit-price-data (asset (string-ascii 10)) (price uint) (confidence uint) (volume uint))
+ (let ((caller tx-sender))
+   ;; Validate contract is active
+   (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
+   ;; Validate asset name
+   (asserts! (is-asset-name-valid asset) ERR-INVALID-PRICE)
+   ;; Validate price
+   (asserts! (is-price-valid price) ERR-INVALID-PRICE)
+   ;; Validate confidence level (0-100)
+   (asserts! (<= confidence u100) ERR-INVALID-PERCENTAGE)
+   ;; Check if source is authorized
+   (asserts! (is-source-reliable caller u1) ERR-UNAUTHORIZED)
+  
+   ;; Store price data
+   (map-set price-data
+     { asset: asset, source: caller }
+     {
+       price: price,
+       timestamp: block-height,
+       block-height: block-height,
+       confidence: confidence,
+       volume: volume,
+       is-verified: true
+     }
+   )
+  
+   ;; Update source reliability
+   (update-source-reliability caller true)
+  
+   ;; Check if circuit breaker should trigger
+   (if (should-trigger-circuit-breaker asset price)
+     (map-set circuit-breakers
+       { asset: asset }
+       {
+         is-triggered: true,
+         trigger-price: price,
+         trigger-block: block-height,
+         trigger-reason: "Price threshold exceeded",
+         cooldown-period: BLOCKS-PER-DAY,
+         reset-block: (+ block-height BLOCKS-PER-DAY)
+       }
+     )
+     true ;; Continue normal operation
+   )
+  
+   (ok true)
+ )
+)
+
+
+;; Create or update asset monitoring configuration
+(define-public (setup-asset-monitor (asset (string-ascii 10)) (upper-threshold uint) (lower-threshold uint) (percentage-threshold uint))
+ (let ((caller tx-sender))
+   ;; Validate contract is active
+   (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
+   ;; Validate asset name
+   (asserts! (is-asset-name-valid asset) ERR-INVALID-PRICE)
+   ;; Validate thresholds
+   (asserts! (is-price-valid upper-threshold) ERR-INVALID-PRICE)
+   (asserts! (is-price-valid lower-threshold) ERR-INVALID-PRICE)
+   (asserts! (> upper-threshold lower-threshold) ERR-INVALID-PRICE)
+   (asserts! (<= percentage-threshold MAX-PERCENTAGE-CHANGE) ERR-INVALID-PERCENTAGE)
+   (asserts! (>= percentage-threshold MIN-PERCENTAGE-CHANGE) ERR-INVALID-PERCENTAGE)
+  
+   ;; Set up monitoring configuration
+   (map-set asset-monitors
+     { asset: asset }
+     {
+       upper-threshold: upper-threshold,
+       lower-threshold: lower-threshold,
+       percentage-change-threshold: percentage-threshold,
+       is-active: true,
+       alert-count: u0,
+       last-alert-block: u0,
+       owner: caller
+     }
+   )
+ 
+   ;; Initialize asset metadata if not exists
+   (if (is-none (map-get? asset-metadata { asset: asset }))
+     (map-set asset-metadata
+       { asset: asset }
+       {
+         full-name: asset,
+         decimals: STX-DECIMALS,
+         is-active: true,
+         min-price: lower-threshold,
+         max-price: upper-threshold,
+         circuit-breaker-threshold: (* upper-threshold u5), ;; 5x upper threshold
+         total-monitors: u1
+       }
+     )
+     ;; Update existing metadata
+     (match (map-get? asset-metadata { asset: asset })
+       existing-data
+       (map-set asset-metadata
+         { asset: asset }
+         (merge existing-data {
+           total-monitors: (+ (get total-monitors existing-data) u1)
+         })
+       )
+       false
+     )
+   )
+  
+   (ok true)
+ )
+)
+
+
+;; Subscribe to price alerts for an asset
+(define-public (subscribe-to-alerts (asset (string-ascii 10)) (threshold-up uint) (threshold-down uint) (notification-type uint))
+ (let ((caller tx-sender))
+   ;; Validate contract is active
+   (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
+   ;; Validate subscription parameters
+   (asserts! (is-subscription-valid threshold-up threshold-down notification-type) ERR-INVALID-PRICE)
 
 
