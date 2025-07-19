@@ -545,5 +545,27 @@
    (asserts! (is-contract-active) ERR-CONTRACT-PAUSED)
    ;; Validate subscription parameters
    (asserts! (is-subscription-valid threshold-up threshold-down notification-type) ERR-INVALID-PRICE)
-
+   
+ ;; Validate asset exists
+   (asserts! (is-some (map-get? asset-metadata { asset: asset })) ERR-NOT-FOUND)
+  
+   ;; Check if subscription already exists
+   (asserts! (is-none (map-get? user-subscriptions { user: caller, asset: asset })) ERR-ALREADY-EXISTS)
+  
+   ;; Create subscription
+   (map-set user-subscriptions
+     { user: caller, asset: asset }
+     {
+       notification-type: notification-type,
+       threshold-up: threshold-up,
+       threshold-down: threshold-down,
+       is-active: true,
+       subscription-fee-paid: u0,
+       expiry-block: (+ block-height (* BLOCKS-PER-DAY u30)) ;; 30 days expiry
+     }
+   )
+  
+   (ok true)
+ )
+)
 
